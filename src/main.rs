@@ -1,17 +1,30 @@
 use futures::future::join_all;
 use std::{
     collections::VecDeque,
-    io::{self, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
+use std::cmp::max;
 use tokio::fs::*;
-use tokio_uring::fs::{DirBuilder, File};
+use tokio_uring::fs::File;
+use std::collections::HashMap;
+
+
+#[derive(Debug, Clone)]
+struct DupeFile {
+    path: PathBuf,
+    size: i64,
+    first: Vec<u8>,
+    last: Vec<u8>,
+}
+
 
 fn main() {
     let mut pd: VecDeque<PathBuf> = VecDeque::new();
     pd.push_back(".".into());
     tokio_uring::start(real_main(&mut pd));
 }
+
+
 async fn real_main(pd: &mut VecDeque<PathBuf>) {
     let mut futuristic = vec![];
     while let Some(path) = pd.pop_front() {
@@ -19,7 +32,8 @@ async fn real_main(pd: &mut VecDeque<PathBuf>) {
 	while let Some(f) = dirs.next_entry().await.unwrap() {
 	    if let Ok(ftype) = f.file_type().await {
 		if ftype.is_file() {
-		    futuristic.push(tokio_uring::spawn(printafile(f.path())));
+                    let size = f.metadata().await.unwrap().len() as i64;
+		    futuristic.push(tokio_uring::spawn(create_dupe_file(f.path(), size)));
 		    // tokio_uring::spawn(printafile(f.path())).await.unwrap();
 		} else if ftype.is_dir() {
 		    pd.push_back(f.path());
@@ -27,36 +41,51 @@ async fn real_main(pd: &mut VecDeque<PathBuf>) {
 	    }
 	}
     }
-    let _huh = join_all(futuristic).await;
+    let dupes = join_all(futuristic).await;
+
+    let mut stuff: HashMap<i64, Vec<DupeFile>> = HashMap::new();
+    for d in dupes {
+        let d = d.unwrap().clone();
+        //let &mut me: Vec<DupeFile> = stuff.entry(d.size).or_default();
+        let me = stuff.entry(d.size).or_insert_with(|| Vec::new());
+        me.push(d);
+    }
+    for x in stuff.keys() {
+        if let Some(f) = stuff.get(x) {
+            if f.len() > 1 {
+                if let Some(head) = f.get(0) {
+                    for y in f.iter().skip(1) {
+                        if head.first == y.first && head.last == y.last {
+                            println!("{:?}", y.path);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
-async fn printafile(f: PathBuf) {
-    let out = io::stdout();
-    let another_f = f.clone();
 
+async fn create_dupe_file(f: PathBuf, size: i64) -> DupeFile {
     // Open the file without blocking
+    let newf = f.clone();
     let file = File::open(f).await.unwrap();
-    let mut buf = vec![0; 16 * 1_024];
+    let buf0 = vec![0; 4 * 1_024];
+    let buf1 = vec![0; 4 * 1_024];
 
-    // Track the current position in the file;
-    let mut pos = 0;
-    let mut out = out.lock();
-    let _whatever = out.write(another_f.to_str().unwrap().as_bytes());
-    let _ = out.write(b"\n");
+    let (res, buf0) = file.read_at(buf0, 0).await;
+    let r = res.unwrap() as i64;
+    if r < 4096 && r < size {
+        println!("weird thing {:?}", r);
+    }
 
-    loop {
-	// Read a chunk
-	let (res, b) = file.read_at(buf, pos).await;
-	let n = res.unwrap();
+    let start = max(0, size - (4*1024)) as u64;
+    let (_, buf1) = file.read_at(buf1, start).await;
 
-	if n == 0 {
-	    break;
-	}
-
-	// out.write_all(&b[..n]).unwrap();
-
-	pos += n as u64;
-
-	buf = b;
+    DupeFile{
+        path: newf,
+        size,
+        first: buf0,
+        last: buf1,
     }
 }
