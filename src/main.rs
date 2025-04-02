@@ -1,3 +1,4 @@
+use futures::future::join_all;
 use std::{
     collections::VecDeque,
     io::{self, Write},
@@ -12,18 +13,21 @@ fn main() {
     tokio_uring::start(real_main(&mut pd));
 }
 async fn real_main(pd: &mut VecDeque<PathBuf>) {
+    let mut futuristic = vec![];
     while let Some(path) = pd.pop_front() {
 	let mut dirs = read_dir(path).await.unwrap();
 	while let Some(f) = dirs.next_entry().await.unwrap() {
 	    if let Ok(ftype) = f.file_type().await {
 		if ftype.is_file() {
-		    tokio_uring::spawn(printafile(f.path())).await.unwrap();
+		    futuristic.push(tokio_uring::spawn(printafile(f.path())));
+		    // tokio_uring::spawn(printafile(f.path())).await.unwrap();
 		} else if ftype.is_dir() {
 		    pd.push_back(f.path());
 		}
 	    }
 	}
     }
+    let _huh = join_all(futuristic).await;
 }
 
 async fn printafile(f: PathBuf) {
@@ -38,6 +42,7 @@ async fn printafile(f: PathBuf) {
     let mut pos = 0;
     let mut out = out.lock();
     let _whatever = out.write(another_f.to_str().unwrap().as_bytes());
+    let _ = out.write(b"\n");
 
     loop {
 	// Read a chunk
@@ -54,5 +59,4 @@ async fn printafile(f: PathBuf) {
 
 	buf = b;
     }
-    println!("");
 }
