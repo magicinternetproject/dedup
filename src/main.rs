@@ -8,6 +8,14 @@ use tokio::fs::*;
 use tokio_uring::fs::File;
 use std::collections::HashMap;
 
+//
+// next steps:
+// - can we "dupe as we go" and when inserting "the next thing" answer "is it the same as anything in the list already?"
+// - ...?
+// - profit!
+//
+// or_insert(new()) versus or_insert_with(|| new()) --> does one get called more?
+
 
 #[derive(Debug, Clone)]
 struct DupeFile {
@@ -17,8 +25,33 @@ struct DupeFile {
     last: Vec<u8>,
 }
 
+struct Foo {
+    size: i64,
+}
+
+fn new_foo() -> Foo {
+    println!("new foo");
+    Foo{size: 5}
+}
+
 
 fn main() {
+
+/*
+// "Why is ther or_insert() and or_insert_with()"?
+    let mut stuff: HashMap<i64, Foo> = HashMap::new();
+
+    stuff.entry(1234).or_insert(new_foo());
+    stuff.entry(1234).or_insert(new_foo());
+    stuff.entry(1234).or_insert(new_foo());
+
+//    stuff.entry(1234).or_insert_with(|| new_foo());
+//    stuff.entry(1234).or_insert_with(|| new_foo());
+//    stuff.entry(1234).or_insert_with(|| new_foo());
+
+    println!("{:?}", stuff.len());
+*/
+
     let mut pd: VecDeque<PathBuf> = VecDeque::new();
     pd.push_back(".".into());
     tokio_uring::start(real_main(&mut pd));
@@ -41,6 +74,7 @@ async fn real_main(pd: &mut VecDeque<PathBuf>) {
 	    }
 	}
     }
+    println!("{:?}", futuristic.len());
     let dupes = join_all(futuristic).await;
 
     let mut stuff: HashMap<i64, Vec<DupeFile>> = HashMap::new();
